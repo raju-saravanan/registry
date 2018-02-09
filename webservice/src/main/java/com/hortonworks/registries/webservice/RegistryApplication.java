@@ -15,13 +15,14 @@
  **/
 package com.hortonworks.registries.webservice;
 
+import com.hazelcast.config.Config;
+import com.hazelcast.config.XmlConfigBuilder;
+import com.hazelcast.core.Hazelcast;
+import com.hazelcast.core.HazelcastInstance;
 import com.hortonworks.registries.common.GenericExceptionMapper;
 import com.hortonworks.registries.common.ServletFilterConfiguration;
-import com.hortonworks.registries.common.transaction.TransactionIsolation;
-import com.hortonworks.registries.cron.RefreshHAServerManagedTask;
 import com.hortonworks.registries.schemaregistry.HAServerNotificationManager;
 import com.hortonworks.registries.schemaregistry.HAServersAware;
-import com.hortonworks.registries.schemaregistry.HostConfigStorable;
 import com.hortonworks.registries.storage.transaction.TransactionEventListener;
 import com.hortonworks.registries.storage.NOOPTransactionManager;
 import com.hortonworks.registries.storage.TransactionManager;
@@ -38,7 +39,6 @@ import com.hortonworks.registries.storage.StorageManager;
 import com.hortonworks.registries.storage.StorageManagerAware;
 import com.hortonworks.registries.storage.StorageProviderConfiguration;
 import io.dropwizard.Application;
-import io.dropwizard.lifecycle.Managed;
 import io.dropwizard.lifecycle.ServerLifecycleListener;
 import io.dropwizard.setup.Bootstrap;
 import io.dropwizard.setup.Environment;
@@ -53,6 +53,7 @@ import org.slf4j.LoggerFactory;
 import javax.servlet.DispatcherType;
 import javax.servlet.Filter;
 import javax.servlet.FilterRegistration;
+import java.io.FileNotFoundException;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -69,7 +70,7 @@ public class RegistryApplication extends Application<RegistryConfiguration> {
     protected StorageManager storageManager;
     protected HAServerNotificationManager haServerNotificationManager = new HAServerNotificationManager();
     protected TransactionManager transactionManager;
-    protected RefreshHAServerManagedTask refreshHAServerManagedTask;
+    protected HazelcastInstance hazelcastInstance;
 
     @Override
     public void run(RegistryConfiguration registryConfiguration, Environment environment) throws Exception {
@@ -87,41 +88,23 @@ public class RegistryApplication extends Application<RegistryConfiguration> {
 
         addServletFilters(registryConfiguration, environment);
 
-        registerAndNotifyOtherServers(environment);
+        registerAndNotifyOtherServers(registryConfiguration.getHazelcastConfigPath(), environment);
 
     }
 
-    private void registerAndNotifyOtherServers(Environment environment) {
+    private void registerAndNotifyOtherServers(String hazelCastConfigPath, Environment environment) {
         environment.lifecycle().addServerLifecycleListener(new ServerLifecycleListener() {
             @Override
             public void serverStarted(Server server) {
-
-                String serverURL = server.getURI().toString();
-
-                haServerNotificationManager.setHomeNodeURL(serverURL);
-
+                Config hazelcastConfig = null;
                 try {
-                    transactionManager.beginTransaction(TransactionIsolation.SERIALIZABLE);
-                    HostConfigStorable hostConfigStorable = storageManager.get(new HostConfigStorable(serverURL).getStorableKey());
-                    if (hostConfigStorable == null) {
-                        storageManager.add(new HostConfigStorable(storageManager.nextId(HostConfigStorable.NAME_SPACE), serverURL,
-                                System.currentTimeMillis()));
-                    }
-                    haServerNotificationManager.refreshServerInfo(storageManager.<HostConfigStorable>list(HostConfigStorable.NAME_SPACE));
-                    transactionManager.commitTransaction();
-                } catch (Exception e) {
-                    transactionManager.rollbackTransaction();
-                    throw e;
+                    hazelcastConfig = new XmlConfigBuilder(hazelCastConfigPath).build();
+                } catch (FileNotFoundException e) {
+                    throw new RuntimeException(e);
                 }
-
-                haServerNotificationManager.notifyDebut();
-
-                refreshHAServerManagedTask = new RefreshHAServerManagedTask(storageManager,transactionManager, haServerNotificationManager);
-                environment.lifecycle().manage(refreshHAServerManagedTask);
-                refreshHAServerManagedTask.start();
+                hazelcastInstance = Hazelcast.newHazelcastInstance(hazelcastConfig);
             }
         });
-
     }
 
     private void registerHA(HAConfiguration haConfiguration, Environment environment) throws Exception {

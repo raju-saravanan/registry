@@ -54,6 +54,9 @@ public class RegistryConfiguration extends Configuration {
 
     private List<ServletFilterConfiguration> servletFilters;
 
+    @JsonProperty("hazelcast.configPath")
+    private String hazelcastConfigPath;
+
     public StorageProviderConfiguration getStorageProviderConfiguration() {
         return storageProviderConfiguration;
     }
@@ -104,5 +107,13 @@ public class RegistryConfiguration extends Configuration {
 
     public void setServletFilters(List<ServletFilterConfiguration> servletFilters) {
         this.servletFilters = servletFilters;
+    }
+
+    public String getHazelcastConfigPath() {
+        return  this.hazelcastConfigPath;
+    }
+
+    public void setHazelcastConfigPath(String hazelcastConfigPath) {
+        this.hazelcastConfigPath = hazelcastConfigPath;
     }
 }

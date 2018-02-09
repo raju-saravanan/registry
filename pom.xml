@@ -295,6 +295,7 @@
         <flyway.version>4.2.0</flyway.version>
         <hikari.version>2.2.5</hikari.version>
         <h2database.version>1.4.188</h2database.version>
+        <hazelcast.version>3.9</hazelcast.version>
     </properties>
 
     <distributionManagement>
@@ -544,6 +545,17 @@
               <artifactId>commons-lang</artifactId>
               <version>${commons-lang.version}</version>
             </dependency>
+            <dependency>
+                <groupId>com.hazelcast</groupId>
+                <artifactId>hazelcast-client</artifactId>
+                <version>${hazelcast.version}</version>
+            </dependency>
+            <dependency>
+              <groupId>com.hazelcast</groupId>
+              <artifactId>hazelcast</artifactId>
+              <version>${hazelcast.version}</version>
+            </dependency>
+
 
             <!-- Test dependencies -->
             <dependency>
