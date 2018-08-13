@@ -20,16 +20,21 @@ import com.hortonworks.registries.common.Schema;
 import com.hortonworks.registries.storage.Storable;
 import com.hortonworks.registries.storage.impl.jdbc.provider.oracle.exception.OracleQueryException;
 import com.hortonworks.registries.storage.impl.jdbc.provider.sql.query.AbstractStorableUpdateQuery;
+import org.apache.commons.lang3.tuple.Pair;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 public class OracleUpdateQuery extends AbstractStorableUpdateQuery {
 
-    private Map<Schema.Field,Object> whereClauseColumnToValueMap = new HashMap<>();
+    private Map<Schema.Field, Object> whereClauseColumnToValueMap = new HashMap<>();
 
     public OracleUpdateQuery(Storable storable) {
         super(storable);
@@ -55,15 +60,48 @@ public class OracleUpdateQuery extends AbstractStorableUpdateQuery {
         }
 
         String sql = "UPDATE \"" + tableName + "\" SET "
-                + join(getColumnNames(columns, "\"%s\" = ?"), ", ")
+                + join(getNonPrimaryColumns(getStorable(), "\"%s\" = ?"), ", ")
                 + " WHERE " + join(whereClauseColumns, " AND ");
         LOG.debug("Sql '{}'", sql);
         return sql;
     }
 
+    public List<Pair<Schema.Field, Object>> getBindings() {
+        List<Pair<Schema.Field, Object>> uniqueBindings = new ArrayList<>();
+        Map<String, Pair<Schema.Field, Object>> bindingsMap = new HashMap<>();
+        for (Pair<Schema.Field, Object> binding : super.getBindings()) {
+            bindingsMap.put(binding.getKey().getName(), Pair.of(binding.getKey(), binding.getValue()));
+        }
+
+        for (String columnName : getNonPrimaryColumns(getStorable(), "%s")) {
+            uniqueBindings.add(bindingsMap.get(columnName));
+        }
+
+        for (String columnName : getPrimaryColumns(getStorable(), "%s")) {
+            uniqueBindings.add(bindingsMap.get(columnName));
+        }
+
+        return uniqueBindings;
+    }
+
+    private List<String> getPrimaryColumns(Storable storable, final String formatter) {
+        return storable.getPrimaryKey().getFieldsToVal().keySet().stream().map(
+                colField -> String.format(formatter, colField.getName())).collect(Collectors.toList());
+    }
+
+    private List<String> getNonPrimaryColumns(Storable storable, final String formatter) {
+        Set<String> primaryKeySet = new HashSet();
+        primaryKeySet.addAll(getPrimaryColumns(storable, formatter));
+        Collection<String> columnNames = getColumnNames(columns, formatter);
+        return columnNames.stream().filter(colField -> !primaryKeySet.contains(colField)).collect(Collectors.toList());
+    }
+
+
     private Map<Schema.Field, Object> createWhereClauseColumnToValueMap() {
-        Map<Schema.Field, Object> bindingMap = getBindings().stream().
-                collect(Collectors.toMap(keyValuePair -> keyValuePair.getKey(), keyValuePair -> keyValuePair.getValue()));
+        Map<Schema.Field, Object> bindingMap = new HashMap<>();
+        for (Pair<Schema.Field, Object> fieldObjectPair : getBindings()) {
+            bindingMap.put(fieldObjectPair.getKey(), fieldObjectPair.getValue());
+        }
         return whereFields.stream().collect(Collectors.toMap(f -> f, f -> bindingMap.get(f)));
     }
 }
