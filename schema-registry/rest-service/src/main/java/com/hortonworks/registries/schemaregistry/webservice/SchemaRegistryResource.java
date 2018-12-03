@@ -16,6 +16,7 @@
 package com.hortonworks.registries.schemaregistry.webservice;
 
 import com.codahale.metrics.annotation.Timed;
+import com.hortonworks.registries.common.SchemaRegistryVersion;
 import com.hortonworks.registries.common.catalog.CatalogResponse;
 import com.hortonworks.registries.common.ha.LeadershipParticipant;
 import com.hortonworks.registries.common.transaction.UnitOfWork;
@@ -23,7 +24,6 @@ import com.hortonworks.registries.common.util.WSUtils;
 import com.hortonworks.registries.schemaregistry.AggregatedSchemaMetadataInfo;
 import com.hortonworks.registries.schemaregistry.CompatibilityResult;
 import com.hortonworks.registries.schemaregistry.ISchemaRegistry;
-import com.hortonworks.registries.schemaregistry.SchemaVersionMergeResult;
 import com.hortonworks.registries.schemaregistry.SchemaBranch;
 import com.hortonworks.registries.schemaregistry.SchemaFieldInfo;
 import com.hortonworks.registries.schemaregistry.SchemaFieldQuery;
@@ -35,6 +35,7 @@ import com.hortonworks.registries.schemaregistry.SchemaProviderInfo;
 import com.hortonworks.registries.schemaregistry.SchemaVersion;
 import com.hortonworks.registries.schemaregistry.SchemaVersionInfo;
 import com.hortonworks.registries.schemaregistry.SchemaVersionKey;
+import com.hortonworks.registries.schemaregistry.SchemaVersionMergeResult;
 import com.hortonworks.registries.schemaregistry.SerDesInfo;
 import com.hortonworks.registries.schemaregistry.SerDesPair;
 import com.hortonworks.registries.schemaregistry.cache.SchemaRegistryCacheType;
@@ -47,6 +48,7 @@ import com.hortonworks.registries.schemaregistry.errors.SchemaNotFoundException;
 import com.hortonworks.registries.schemaregistry.errors.UnsupportedSchemaTypeException;
 import com.hortonworks.registries.schemaregistry.state.SchemaLifecycleException;
 import com.hortonworks.registries.schemaregistry.state.SchemaVersionLifecycleStateMachineInfo;
+import com.hortonworks.registries.storage.exception.StorageException;
 import com.hortonworks.registries.storage.search.OrderBy;
 import com.hortonworks.registries.storage.search.WhereClause;
 import io.swagger.annotations.Api;
@@ -101,9 +103,23 @@ public class SchemaRegistryResource extends BaseRegistryResource {
 
     // reserved as schema related paths use these strings
     private static final String[] reservedNames = {"aggregate", "versions", "compatibility"};
+    private final SchemaRegistryVersion schemaRegistryVersion;
 
-    public SchemaRegistryResource(ISchemaRegistry schemaRegistry, AtomicReference<LeadershipParticipant> leadershipParticipant) {
+    public SchemaRegistryResource(ISchemaRegistry schemaRegistry,
+                                  AtomicReference<LeadershipParticipant> leadershipParticipant,
+                                  SchemaRegistryVersion schemaRegistryVersion) {
         super(schemaRegistry, leadershipParticipant);
+        this.schemaRegistryVersion = schemaRegistryVersion;
+    }
+
+    @GET
+    @Path("/version")
+    @ApiOperation(value = "Get the version information of this Schema Registry instance",
+            response = SchemaRegistryVersion.class,
+            tags = OPERATION_GROUP_OTHER)
+    @Timed
+    public Response getVersion(@Context UriInfo uriInfo) {
+        return WSUtils.respondEntity(schemaRegistryVersion, Response.Status.OK);
     }
 
     @GET
@@ -206,7 +222,7 @@ public class SchemaRegistryResource extends BaseRegistryResource {
     @Path("/search/schemas")
     @ApiOperation(value = "Search for schemas containing the given name and description",
             notes = "Search the schemas for given name and description, return a list of schemas that contain the field.",
-            response = SchemaMetadataInfo.class, responseContainer = "Collection", tags = OPERATION_GROUP_SCHEMA)
+            response = SchemaMetadataInfo.class, responseContainer = "List", tags = OPERATION_GROUP_SCHEMA)
     @Timed
     @UnitOfWork
     public Response findSchemas(@Context UriInfo uriInfo) {
@@ -270,7 +286,7 @@ public class SchemaRegistryResource extends BaseRegistryResource {
     @Path("/search/schemas/aggregated")
     @ApiOperation(value = "Search for schemas containing the given name and description",
             notes = "Search the schemas for given name and description, return a list of schemas that contain the field.",
-            response = AggregatedSchemaMetadataInfo.class, responseContainer = "Collection", tags = OPERATION_GROUP_SCHEMA)
+            response = AggregatedSchemaMetadataInfo.class, responseContainer = "List", tags = OPERATION_GROUP_SCHEMA)
     @Timed
     @UnitOfWork
     public Response findAggregatedSchemas(@Context UriInfo uriInfo) {
@@ -367,7 +383,11 @@ public class SchemaRegistryResource extends BaseRegistryResource {
             } catch (UnsupportedSchemaTypeException ex) {
                 LOG.error("Unsupported schema type encountered while adding schema metadata [{}]", schemaMetadata, ex);
                 response = WSUtils.respond(Response.Status.BAD_REQUEST, CatalogResponse.ResponseMessage.UNSUPPORTED_SCHEMA_TYPE, ex.getMessage());
-            } catch (Exception ex) {
+            } catch (StorageException ex) {
+                LOG.error("Unable to add schema metadata [{}]", schemaMetadata, ex);
+                response = WSUtils.respond(Response.Status.BAD_REQUEST, CatalogResponse.ResponseMessage.ENTITY_CONFLICT, ex.getMessage());
+            }
+            catch (Exception ex) {
                 LOG.error("Error encountered while adding schema info [{}] ", schemaMetadata, ex);
                 response = WSUtils.respond(Response.Status.INTERNAL_SERVER_ERROR,
                                            CatalogResponse.ResponseMessage.EXCEPTION,
@@ -1098,6 +1118,10 @@ public class SchemaRegistryResource extends BaseRegistryResource {
         }
     }
 
+
+    // When ever SCHEMA_BRANCH or SCHEMA_VERSION is updated in one of the node in the cluster, then it will use this API to notify rest of the node in the
+    // cluster to update their corresponding cache.
+    // TODO: This API was introduced as a temporary solution to address HA requirements with cache synchronization. A more permanent and stable fix should be incorporated.
     @POST
     @Path("/cache/{cacheType}/invalidate")
     @UnitOfWork
@@ -1111,7 +1135,9 @@ public class SchemaRegistryResource extends BaseRegistryResource {
         }
     }
 
-
+    // When a new node joins registry cluster, it invokes this API of every node which are already part of the cluster.
+    // The existing nodes then update their internal list of nodes part of their cluster.
+    // TODO: This API was introduced as a temporary solution to address HA requirements with cache synchronization. A more permanent and stable fix should be incorporated.
     @POST
     @Path(("/notifications/node/debut"))
     public Response registerNodeDebut(String nodeUrl) {

@@ -22,6 +22,8 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.Sets;
 import com.hortonworks.registries.auth.KerberosLogin;
+import com.hortonworks.registries.common.SchemaRegistryServiceInfo;
+import com.hortonworks.registries.common.SchemaRegistryVersion;
 import com.hortonworks.registries.common.catalog.CatalogResponse;
 import com.hortonworks.registries.common.util.ClassLoaderAwareInvocationHandler;
 import com.hortonworks.registries.schemaregistry.CompatibilityResult;
@@ -58,6 +60,7 @@ import org.apache.commons.io.IOUtils;
 import org.glassfish.jersey.SslConfigurator;
 import org.glassfish.jersey.client.ClientConfig;
 import org.glassfish.jersey.client.ClientProperties;
+import org.glassfish.jersey.client.JerseyClientBuilder;
 import org.glassfish.jersey.media.multipart.BodyPart;
 import org.glassfish.jersey.media.multipart.FormDataMultiPart;
 import org.glassfish.jersey.media.multipart.MultiPart;
@@ -71,6 +74,7 @@ import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.SSLContext;
 import javax.security.auth.Subject;
 import javax.security.auth.login.LoginException;
+import javax.ws.rs.BadRequestException;
 import javax.ws.rs.NotFoundException;
 import javax.ws.rs.client.Client;
 import javax.ws.rs.client.ClientBuilder;
@@ -171,6 +175,8 @@ public class SchemaRegistryClient implements ISchemaRegistryClient {
         }
     }
 
+    private static final SchemaRegistryVersion CLIENT_VERSION = SchemaRegistryServiceInfo.get().version();
+
     private final Client client;
     private final UrlSelector urlSelector;
     private final Map<String, SchemaRegistryTargets> urlWithTargets;
@@ -205,7 +211,7 @@ public class SchemaRegistryClient implements ISchemaRegistryClient {
         configuration = new Configuration(conf);
 
         ClientConfig config = createClientConfig(conf);
-        ClientBuilder clientBuilder = ClientBuilder.newBuilder()
+        ClientBuilder clientBuilder = JerseyClientBuilder.newBuilder()
                                                    .withConfig(config)
                                                    .property(ClientProperties.FOLLOW_REDIRECTS, Boolean.TRUE);
         if (conf.containsKey(SSL_CONFIGURATION_KEY)) {
@@ -407,7 +413,17 @@ public class SchemaRegistryClient implements ISchemaRegistryClient {
 
 
     private Long doRegisterSchemaMetadata(SchemaMetadata schemaMetadata, WebTarget schemasTarget) {
-        return postEntity(schemasTarget, schemaMetadata, Long.class);
+        try {
+            return postEntity(schemasTarget, schemaMetadata, Long.class);
+        } catch(BadRequestException ex) {
+            Response response = ex.getResponse();
+            CatalogResponse catalogResponse = SchemaRegistryClient.readCatalogResponse(response.readEntity(String.class));
+            if(catalogResponse.getResponseCode() == CatalogResponse.ResponseMessage.ENTITY_CONFLICT.getCode()) {
+                return getSchemaMetadataInfo(schemaMetadata.getName()).getId();
+            } else {
+                throw ex;
+            }
+        }
     }
 
     @Override
@@ -994,6 +1010,10 @@ public class SchemaRegistryClient implements ISchemaRegistryClient {
     @Override
     public void close() {
         client.close();
+    }
+
+    public SchemaRegistryVersion clientVersion() {
+        return CLIENT_VERSION;
     }
 
     private <T> T createInstance(SerDesInfo serDesInfo, boolean isSerializer) {

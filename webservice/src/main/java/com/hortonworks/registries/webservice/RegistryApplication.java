@@ -22,6 +22,7 @@ import com.hortonworks.registries.cron.RefreshHAServerManagedTask;
 import com.hortonworks.registries.schemaregistry.HAServerNotificationManager;
 import com.hortonworks.registries.schemaregistry.HAServersAware;
 import com.hortonworks.registries.schemaregistry.HostConfigStorable;
+import com.hortonworks.registries.storage.TransactionManagerAware;
 import com.hortonworks.registries.storage.transaction.TransactionEventListener;
 import com.hortonworks.registries.storage.NOOPTransactionManager;
 import com.hortonworks.registries.storage.TransactionManager;
@@ -206,8 +207,14 @@ public class RegistryApplication extends Application<RegistryConfiguration> {
                 storageManagerAware.setStorageManager(storageManager);
             }
 
+            if (moduleRegistration instanceof TransactionManagerAware) {
+                LOG.info("Module [{}] is TransactionManagerAware and setting TransactionManager.", moduleName);
+                TransactionManagerAware transactionManagerAware = (TransactionManagerAware) moduleRegistration;
+                transactionManagerAware.setTransactionManager(transactionManager);
+            }
+
             if(moduleRegistration instanceof LeadershipAware) {
-                LOG.info("Module [{}] is registered for LeadershipParticipant registration.");
+                LOG.info("Module [{}] is registered for LeadershipParticipant registration.", moduleName);
                 LeadershipAware leadershipAware = (LeadershipAware) moduleRegistration;
                 leadershipAware.setLeadershipParticipant(leadershipParticipantRef);
             }
@@ -227,7 +234,7 @@ public class RegistryApplication extends Application<RegistryConfiguration> {
         }
         
         environment.jersey().register(MultiPartFeature.class);
-        environment.jersey().register(new TransactionEventListener(transactionManager));
+        environment.jersey().register(new TransactionEventListener(transactionManager, TransactionIsolation.READ_COMMITTED));
 
     }
 
@@ -276,9 +283,10 @@ public class RegistryApplication extends Application<RegistryConfiguration> {
                 try {
                     String className = servletFilterConfig.getClassName();
                     Map<String, String> params = servletFilterConfig.getParams();
+                    String typeSuffix = params.get("type") != null ? ("-" + params.get("type").toString()) : "";
                     LOG.info("Registering servlet filter [{}]", servletFilterConfig);
                     Class<? extends Filter> filterClass = (Class<? extends Filter>) Class.forName(className);
-                    FilterRegistration.Dynamic dynamic = environment.servlets().addFilter(className, filterClass);
+                    FilterRegistration.Dynamic dynamic = environment.servlets().addFilter(className + typeSuffix, filterClass);
                     if(params != null) {
                         dynamic.setInitParameters(params);
                     }
